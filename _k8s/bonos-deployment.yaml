@@ -1,0 +1,79 @@
+# ============================================================
+# bonos-service  -  Deployment + Service (ClusterIP, tráfico interno)
+# Las sondas apuntan a /livez y /readyz del punto 4.1
+# resources.requests/limits de CPU son OBLIGATORIOS para que el HPA funcione
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bonos-service
+  labels:
+    app: bonos-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bonos-service
+  template:
+    metadata:
+      labels:
+        app: bonos-service
+    spec:
+      containers:
+        - name: bonos-service
+          # Reemplaza <ACCOUNT_ID> y <REGION> por los de tu cuenta AWS Academy
+          image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/bonos-service:latest
+          ports:
+            - containerPort: 8004
+          env:
+            - name: PORT
+              value: "8004"
+            # --- Credenciales inyectadas desde el Secret casino-secrets ---
+            - name: DB_HOST
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: DB_HOST } }
+            - name: DB_PORT
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: DB_PORT } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: DB_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: DB_PASSWORD } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: DB_NAME } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: casino-secrets, key: JWT_SECRET } }
+          # --- requests/limits: necesarios para el autoescalado por CPU ---
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          # --- Sondas de salud (punto 4.1 / 4.3) ---
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8004
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bonos-service
+  labels:
+    app: bonos-service
+spec:
+  type: ClusterIP            # interno: nginx del frontend lo alcanza por DNS bonos-service:8004
+  selector:
+    app: bonos-service
+  ports:
+    - port: 8004
+      targetPort: 8004
+      protocol: TCP

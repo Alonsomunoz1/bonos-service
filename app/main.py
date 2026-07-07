@@ -13,12 +13,12 @@ Prefijo de rutas: /api/bonos  (para que nginx pueda enrutar por prefijo).
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import usuario_actual
-from .db import conexion, dict_cursor, esperar_bd, init_schema
+from .db import conexion, dict_cursor, esperar_bd, init_schema, ping
 
 
 @asynccontextmanager
@@ -53,10 +53,26 @@ class ReclamarRequest(BaseModel):
     monto_base: float = Field(default=0, ge=0, description="Base para bonos por porcentaje")
 
 
-# TODO (alumno): implementar las rutas de salud que usará Kubernetes:
-#   - liveness: ¿el proceso está vivo? (respuesta simple).
-#   - readiness: ¿está listo para recibir tráfico? Debe verificar la BD.
-# Luego configurar livenessProbe/readinessProbe en el Deployment de EKS.
+# ------------------------------------------------------------------
+# Sondas de salud para Kubernetes (EP3)
+#   - liveness  (/livez): el proceso está vivo. NO toca la BD.
+#                Si falla -> k8s REINICIA el pod.
+#   - readiness (/readyz): ¿listo para tráfico? Verifica PostgreSQL con ping().
+#                200 si la BD responde, 503 si no.
+#                Si falla -> k8s saca el pod del balanceo (sin reiniciarlo).
+# Réplica del patrón /health de casino-backend, separado en dos sondas.
+# ------------------------------------------------------------------
+@app.get("/livez", tags=["health"])
+def livez():
+    return {"status": "ok", "service": "bonos-service"}
+
+
+@app.get("/readyz", tags=["health"])
+def readyz(response: Response):
+    if ping():
+        return {"status": "ready", "db": "up"}
+    response.status_code = 503
+    return {"status": "degraded", "db": "down"}
 
 
 @app.get("/api/bonos")
